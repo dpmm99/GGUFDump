@@ -515,6 +515,39 @@ class GgufMetadata {
     }
 }
 
+/**
+ * Calculates the key-value cache size per token based on provided JSON metadata.
+ * @param {string|object} json - A JSON string or object with keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.
+ * @returns {number} The size of the key-value cache in kilobytes required per token.
+ */
+function getKvCacheKBPerTokenFromJson(json) {
+    let obj;
+    if (typeof json === 'string') {
+        if (!json.trim()) throw new Error("Input JSON cannot be null or empty.");
+        obj = JSON.parse(json);
+    } else if (typeof json === 'object' && json !== null) {
+        obj = json;
+    } else {
+        throw new Error("Input must be a JSON string or object.");
+    }
+
+    const hiddenSize = obj.hidden_size;
+    const attentionHeads = obj.num_attention_heads;
+    const hiddenLayers = obj.num_hidden_layers;
+    const kvHeads = obj.num_key_value_heads;
+
+    if (
+        typeof hiddenSize !== 'number' ||
+        typeof attentionHeads !== 'number' ||
+        typeof hiddenLayers !== 'number' ||
+        typeof kvHeads !== 'number'
+    ) {
+        throw new Error("JSON must contain numeric keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.");
+    }
+
+    return Math.floor(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024);
+}
+
 const GgufMetadataValueType = {
     UINT8: 0,
     INT8: 1,

@@ -1,307 +1,400 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GGUF v3 Header Reader</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GGUF v3 Header Reader</title>
 </head>
 <body style="margin: 0; min-height: 100vh; padding-top: 2em; padding-left: 1em; box-sizing: border-box;">
-  <h1>GGUF v3 File Header Reader</h1>
-  <input type="file" id="fileInput" style="width: 100%" multiple />
-  <div style="display: none" id="loading"><p>Loading...</p></div>
-  <pre id="output"></pre>
+    <h1>GGUF v3 File Header Reader</h1>
+    <input type="file" id="fileInput" style="width: 100%" multiple />
+    <div style="display: none" id="loading"><p>Loading...</p></div>
+    <pre id="output"></pre>
 
-  <script src="GgufMetadata.js"></script>
-  
-  <script>
-    const dropArea = document.body;
-    const fileInput = document.getElementById('fileInput');
-    const output = document.getElementById('output');
+    <script src="GgufMetadata.js"></script>
 
-    dropArea.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropArea.classList.add('hover');
-    });
+    <script>
+        const dropArea = document.body;
+        const fileInput = document.getElementById('fileInput');
+        const output = document.getElementById('output');
 
-    dropArea.addEventListener('dragleave', () => {
-        dropArea.classList.remove('hover');
-    });
-
-    dropArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropArea.classList.remove('hover');
-        const files = e.dataTransfer.files;
-        if (files.length) handleFiles(files);
-    });
-
-    fileInput.addEventListener('change', async (event) => {
-        const files = event.target.files;
-        if (files.length) handleFiles(files);
-    });
-    
-	function waiter() {
-        return new Promise(resolve => {
-            requestAnimationFrame(resolve);
+        dropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropArea.classList.add('hover');
         });
-    }
 
-    async function handleFiles(files) {
-        let lastFile;
-        try {
-            output.innerHTML = '';
-            document.getElementById("loading").style.display = "";
-            
-            // Process each file
-            for (let i = 0; i < files.length; i++) {
-                const file = lastFile = files[i];
-                const metadata = new GgufMetadata();
-                await metadata.loadFromFile(file, waiter);
-                await displayMetadata(metadata, file.name);
-            }
-            
-            document.getElementById("loading").style.display = "none";
-        } catch (error) {
-            output.innerHTML = `<p style="color: red;">Error loading "${lastFile.name}": ${error.message}</p>`;
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('hover');
+        });
+
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.classList.remove('hover');
+            const files = e.dataTransfer.files;
+            if (files.length) handleFiles(files);
+        });
+
+        fileInput.addEventListener('change', async (event) => {
+            const files = event.target.files;
+            if (files.length) handleFiles(files);
+        });
+
+        function waiter() {
+            return new Promise(resolve => {
+                requestAnimationFrame(resolve);
+            });
         }
-    }
 
-    function createSection(title) {
-        const section = document.createElement('div');
-        section.className = 'metadata-section';
-        
-        const header = document.createElement('div');
-        header.className = 'section-header';
-        header.innerHTML = `<strong>${title}</strong>`;
-        header.addEventListener('click', () => {
-            const content = section.querySelector('.section-content');
-            content.style.display = content.style.display === 'block' ? 'none' : 'block';
-        });
+        /**
+         * Handles loading and displaying metadata for GGUF and JSON files.
+         * @param {FileList} files - The list of files to process.
+         */
+        async function handleFiles(files) {
+            let lastFile;
+            try {
+                output.innerHTML = '';
+                document.getElementById("loading").style.display = "";
 
-        const content = document.createElement('div');
-        content.className = 'section-content';
-        
-        section.appendChild(header);
-        section.appendChild(content);
-        return section;
-    }
+                // Process each file
+                for (let i = 0; i < files.length; i++) {
+                    const file = lastFile = files[i];
 
-    async function displayMetadata(metadata, filename) {
-        // Create main container
-        const container = document.createElement('details');
-        container.className = 'metadata-container';
-        container.open = true;
-        
-        // Title
-        const filenameDiv = document.createElement('summary');
-        filenameDiv.innerHTML = `<h2><strong>File:</strong> </h2>`;
-        const filenameSpan = document.createElement('span');
-        filenameSpan.textContent = filename;
-        filenameDiv.querySelector("h2").appendChild(filenameSpan);
-        container.appendChild(filenameDiv);
-        
-        // Add tensor information
-        const tensorsSection = createSection('Tensor Information');
-        const tensorsList = document.createElement('ul');
-        metadata.tensors.forEach(tensor => {
-            const tensorItem = document.createElement('li');
-            tensorItem.className = 'tensor-item';
-            tensorItem.innerHTML = `<strong>Tensor Name:</strong> ${tensor.name}<br><strong>Type:</strong> ${Object.entries(GgmlType).find(p => p[1] == tensor.type)[0]}<br><strong>Dimensions:</strong> ${tensor.dimensions.join(' x ')}<br><strong>Offset:</strong> ${tensor.offset}`;
-            tensorsList.appendChild(tensorItem);
-        });
-        tensorsSection.querySelector('.section-content').appendChild(tensorsList);
+                    // --- Determine file type ---
+                    const fileExtension = file.name.split('.').pop().toLowerCase();
+                    let metadata;
+                    let displayFunc;
+                    let jsonData;
 
-        // Add offload priority information
-        const offloadSection = createSection('Suggested GPU Offload Priority');
-        const offloadTable = document.createElement('table');
-        offloadTable.className = 'offload-table';
-        const thead = document.createElement('thead');
-        const tbody = document.createElement('tbody');
-        
-        // Create table headers
-        const headers = ['Tensor Name', 'Dimensions', 'Type'];
-        const headerRow = document.createElement('tr');
-        headers.forEach(header => {
-            const th = document.createElement('th');
-            th.textContent = header;
-            headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
+                    if (fileExtension === 'gguf') {
+                        metadata = new GgufMetadata();
+                        await metadata.loadFromFile(file, waiter);
+                        displayFunc = displayMetadata;
+                    } else if (fileExtension === 'json') {
+                        const fileContent = await readFileAsText(file);
+                        try {
+                            jsonData = JSON.parse(fileContent);
+                            displayFunc = displayMetadataJson;
+                        } catch (jsonError) {
+                            output.innerHTML += `<p style="color: red;">Error parsing JSON from "${file.name}": ${jsonError.message}</p>`;
+                            console.error(`Failed to parse JSON from ${file.name}:`, jsonError);
+                            continue; // Skip to the next file
+                        }
+                    } else {
+                        // Handle unsupported file types
+                        output.innerHTML += `<p style="color: orange;">Skipping unsupported file type: ${fileExtension} for "${file.name}"</p>`;
+                        console.warn(`Skipping unsupported file type: ${fileExtension} for "${file.name}"`);
+                        continue;
+                    }
 
-        // Populate table rows
-        metadata.getTensorsForOffload().forEach(tensor => {
-            const row = document.createElement('tr');
+                    // --- Display metadata ---
+                    if (displayFunc) {
+                        try {
+                            await displayFunc(metadata || jsonData, file.name); // Pass metadata or parsed JSON
+                        } catch (displayError) {
+                            output.innerHTML += `<p style="color: red;">Error displaying metadata for "${file.name}": ${displayError.message}</p>`;
+                            console.error(`Failed to display metadata for ${file.name}:`, displayError);
+                        }
+                    }
+                }
 
-            const cells = [
-                tensor.name,
-                tensor.dimensions.join(' x '),
-                Object.entries(GgmlType).find(p => p[1] == tensor.type)[0]
-            ];
-            
-            cells.forEach(cell => {
-                const td = document.createElement('td');
-                td.textContent = cell;
-                row.appendChild(td);
+                document.getElementById("loading").style.display = "none"; // Hide loading indicator
+            } catch (error) {
+                // Catch errors during the loop (e.g., issues with GgufMetadata loading)
+                output.innerHTML = `<p style="color: red;">An error occurred while processing files: ${error.message}</p>`;
+                document.getElementById("loading").style.display = "none"; // Ensure loading is hidden on error
+                console.error("Error in handleFiles loop:", error);
+            }
+        }
+
+        /**
+         * Reads a File object as a text string.
+         * @param {File} file - The File object to read.
+         * @returns {Promise<string>} A promise that resolves with the file's content as text.
+         */
+        function readFileAsText(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    resolve(event.target.result);
+                };
+                reader.onerror = (error) => {
+                    reject(new Error(`Failed to read file "${file.name}": ${error.target.error}`));
+                };
+                reader.readAsText(file);
             });
-            tbody.appendChild(row);
-        });
-        
-        offloadTable.appendChild(thead);
-        offloadTable.appendChild(tbody);
-        offloadSection.querySelector('.section-content').appendChild(offloadTable);
+        }
 
-        // Add KV cache information
-        const kvCacheInfo = document.createElement('div');
-        kvCacheInfo.innerHTML = `<p><strong>KV Cache Size per Token:</strong> ${metadata.getKvCacheKBPerToken()} KB</p>`;
+        function createSection(title) {
+            const section = document.createElement('div');
+            section.className = 'metadata-section';
 
-        // Primitive dictionaries
-        const valueTypesSection = createValueTable('UInt8 Values', metadata.uint8Values);
-        const int8ValuesSection = createValueTable('Int8 Values', metadata.int8Values);
-        const uint16ValuesSection = createValueTable('UInt16 Values', metadata.uint16Values);
-        const int16ValuesSection = createValueTable('Int16 Values', metadata.int16Values);
-        const uint32ValuesSection = createValueTable('UInt32 Values', metadata.uint32Values);
-        const int32ValuesSection = createValueTable('Int32 Values', metadata.int32Values);
-        const float32ValuesSection = createValueTable('Float32 Values', metadata.float32Values);
-        const boolValuesSection = createValueTable('Bool Values', metadata.boolValues);
-        const stringValuesSection = createValueTable('String Values', metadata.stringValues);
-        const uint64ValuesSection = createValueTable('UInt64 Values', metadata.uint64Values);
-        const int64ValuesSection = createValueTable('Int64 Values', metadata.int64Values);
-        const float64ValuesSection = createValueTable('Float64 Values', metadata.float64Values);
-
-        // Add all sections to the container
-        container.appendChild(kvCacheInfo);
-        container.appendChild(tensorsSection);
-        container.appendChild(offloadSection);
-        container.appendChild(valueTypesSection);
-        container.appendChild(int8ValuesSection);
-        container.appendChild(uint16ValuesSection);
-        container.appendChild(int16ValuesSection);
-        container.appendChild(uint32ValuesSection);
-        container.appendChild(int32ValuesSection);
-        container.appendChild(float32ValuesSection);
-        container.appendChild(boolValuesSection);
-        container.appendChild(stringValuesSection);
-        container.appendChild(uint64ValuesSection);
-        container.appendChild(int64ValuesSection);
-        container.appendChild(float64ValuesSection);
-
-        output.appendChild(container);
-    }
-
-    function createValueTable(title, valueDict) {
-        const valueSection = createSection(title);
-        const valueTable = document.createElement('table');
-        valueTable.className = 'value-table';
-        const thead = document.createElement('thead');
-        const tbody = document.createElement('tbody');
-
-        // Create table headers
-        const headers = ['Key', 'Value'];
-        const headerRow = document.createElement('tr');
-        headers.forEach(header => {
-            const th = document.createElement('th');
-            th.textContent = header;
-            headerRow.appendChild(th);
-        });
-        thead.appendChild(headerRow);
-
-        // Populate table rows
-        Object.entries(valueDict).forEach(([key, value]) => {
-            const row = document.createElement('tr');
-            const cells = [key, value];
-            cells.forEach(cell => {
-                const td = document.createElement('td');
-                td.textContent = cell;
-                row.appendChild(td);
+            const header = document.createElement('div');
+            header.className = 'section-header';
+            header.innerHTML = `<strong>${title}</strong>`;
+            header.addEventListener('click', () => {
+                const content = section.querySelector('.section-content');
+                content.style.display = content.style.display === 'block' ? 'none' : 'block';
             });
-            tbody.appendChild(row);
-        });
 
-        valueTable.appendChild(thead);
-        valueTable.appendChild(tbody);
-        valueSection.querySelector('.section-content').appendChild(valueTable);
+            const content = document.createElement('div');
+            content.className = 'section-content';
 
-        return valueSection;
-    }
-  </script>
+            section.appendChild(header);
+            section.appendChild(content);
+            return section;
+        }
 
-  <style>
-    .metadata-container {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 20px;
-    }
+        async function displayMetadata(metadata, filename) {
+            // Create main container
+            const container = document.createElement('details');
+            container.className = 'metadata-container';
+            container.open = true;
 
-    .metadata-section {
-        margin-bottom: 20px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-    }
+            // Title
+            const filenameDiv = document.createElement('summary');
+            filenameDiv.innerHTML = `<h2><strong>File:</strong> </h2>`;
+            const filenameSpan = document.createElement('span');
+            filenameSpan.textContent = filename;
+            filenameDiv.querySelector("h2").appendChild(filenameSpan);
+            container.appendChild(filenameDiv);
 
-    .section-header {
-        padding: 10px;
-        background-color: #f5f5f5;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-    }
+            // Add tensor information
+            const tensorsSection = createSection('Tensor Information');
+            const tensorsList = document.createElement('ul');
+            metadata.tensors.forEach(tensor => {
+                const tensorItem = document.createElement('li');
+                tensorItem.className = 'tensor-item';
+                tensorItem.innerHTML = `<strong>Tensor Name:</strong> ${tensor.name}<br><strong>Type:</strong> ${Object.entries(GgmlType).find(p => p[1] == tensor.type)[0]}<br><strong>Dimensions:</strong> ${tensor.dimensions.join(' x ')}<br><strong>Offset:</strong> ${tensor.offset}`;
+                tensorsList.appendChild(tensorItem);
+            });
+            tensorsSection.querySelector('.section-content').appendChild(tensorsList);
 
-    .section-content {
-        padding: 10px;
-        display: none;
-    }
+            // Add offload priority information
+            const offloadSection = createSection('Suggested GPU Offload Priority');
+            const offloadTable = document.createElement('table');
+            offloadTable.className = 'offload-table';
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
 
-    .section-header:hover {
-        background-color: #e0e0e0;
-    }
+            // Create table headers
+            const headers = ['Tensor Name', 'Dimensions', 'Type'];
+            const headerRow = document.createElement('tr');
+            headers.forEach(header => {
+                const th = document.createElement('th');
+                th.textContent = header;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
 
-    .tensor-item {
-        margin: 10px 0;
-        padding: 10px;
-        background-color: #f9f9f9;
-        border-radius: 3px;
-    }
+            // Populate table rows
+            metadata.getTensorsForOffload().forEach(tensor => {
+                const row = document.createElement('tr');
 
-    .offload-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 10px;
-    }
+                const cells = [
+                    tensor.name,
+                    tensor.dimensions.join(' x '),
+                    Object.entries(GgmlType).find(p => p[1] == tensor.type)[0]
+                ];
 
-    .offload-table th,
-    .offload-table td {
-        padding: 8px;
-        text-align: left;
-        border-bottom: 1px solid #ddd;
-    }
+                cells.forEach(cell => {
+                    const td = document.createElement('td');
+                    td.textContent = cell;
+                    row.appendChild(td);
+                });
+                tbody.appendChild(row);
+            });
 
-    .offload-table th {
-        background-color: #f5f5f5;
-    }
+            offloadTable.appendChild(thead);
+            offloadTable.appendChild(tbody);
+            offloadSection.querySelector('.section-content').appendChild(offloadTable);
 
-    .value-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 10px;
-    }
+            // Add KV cache information
+            const kvCacheInfo = document.createElement('div');
+            kvCacheInfo.innerHTML = `<p><strong>KV Cache Size per Token:</strong> ${metadata.getKvCacheKBPerToken()} KB</p>`;
 
-    .value-table th,
-    .value-table td {
-        padding: 8px;
-        text-align: left;
-        border-bottom: 1px solid #ddd;
-    }
+            // Primitive dictionaries
+            const valueTypesSection = createValueTable('UInt8 Values', metadata.uint8Values);
+            const int8ValuesSection = createValueTable('Int8 Values', metadata.int8Values);
+            const uint16ValuesSection = createValueTable('UInt16 Values', metadata.uint16Values);
+            const int16ValuesSection = createValueTable('Int16 Values', metadata.int16Values);
+            const uint32ValuesSection = createValueTable('UInt32 Values', metadata.uint32Values);
+            const int32ValuesSection = createValueTable('Int32 Values', metadata.int32Values);
+            const float32ValuesSection = createValueTable('Float32 Values', metadata.float32Values);
+            const boolValuesSection = createValueTable('Bool Values', metadata.boolValues);
+            const stringValuesSection = createValueTable('String Values', metadata.stringValues);
+            const uint64ValuesSection = createValueTable('UInt64 Values', metadata.uint64Values);
+            const int64ValuesSection = createValueTable('Int64 Values', metadata.int64Values);
+            const float64ValuesSection = createValueTable('Float64 Values', metadata.float64Values);
 
-    .value-table th {
-        background-color: #f5f5f5;
-    }
-    
-    h2 {
-        display: inline-block;
-    }
+            // Add all sections to the container
+            container.appendChild(kvCacheInfo);
+            container.appendChild(tensorsSection);
+            container.appendChild(offloadSection);
+            container.appendChild(valueTypesSection);
+            container.appendChild(int8ValuesSection);
+            container.appendChild(uint16ValuesSection);
+            container.appendChild(int16ValuesSection);
+            container.appendChild(uint32ValuesSection);
+            container.appendChild(int32ValuesSection);
+            container.appendChild(float32ValuesSection);
+            container.appendChild(boolValuesSection);
+            container.appendChild(stringValuesSection);
+            container.appendChild(uint64ValuesSection);
+            container.appendChild(int64ValuesSection);
+            container.appendChild(float64ValuesSection);
 
-    summary {
-        cursor: pointer;
-    }
-  </style>
+            output.appendChild(container);
+        }
+
+        /**
+         * Displays metadata for a JSON file, focusing on KV cache size per token.
+         * @param {object} jsonData - The parsed JSON data from the file.
+         * @param {string} filename - The name of the file.
+         */
+        async function displayMetadataJson(jsonData, filename) {
+            // Create main container
+            const container = document.createElement('details');
+            container.className = 'metadata-container';
+            container.open = true;
+
+            // Title
+            const filenameDiv = document.createElement('summary');
+            filenameDiv.innerHTML = `<h2><strong>File:</strong> </h2>`;
+            const filenameSpan = document.createElement('span');
+            filenameSpan.textContent = filename;
+            filenameDiv.querySelector("h2").appendChild(filenameSpan);
+            container.appendChild(filenameDiv);
+
+            // Display KV Cache Size per Token
+            const kvCacheInfo = document.createElement('div');
+            try {
+                const kvCacheKB = getKvCacheKBPerTokenFromJson(jsonData);
+                kvCacheInfo.innerHTML = `<p><strong>KV Cache Size per Token:</strong> ${kvCacheKB} KB</p>`;
+            } catch (error) {
+                kvCacheInfo.innerHTML = `<p style="color: red;"><strong>Error calculating KV Cache Size:</strong> ${error.message}</p>`;
+            }
+
+            // Add all sections to the container
+            container.appendChild(kvCacheInfo);
+
+            output.appendChild(container);
+        }
+
+        function createValueTable(title, valueDict) {
+            const valueSection = createSection(title);
+            const valueTable = document.createElement('table');
+            valueTable.className = 'value-table';
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            // Create table headers
+            const headers = ['Key', 'Value'];
+            const headerRow = document.createElement('tr');
+            headers.forEach(header => {
+                const th = document.createElement('th');
+                th.textContent = header;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            // Populate table rows
+            Object.entries(valueDict).forEach(([key, value]) => {
+                const row = document.createElement('tr');
+                const cells = [key, value];
+                cells.forEach(cell => {
+                    const td = document.createElement('td');
+                    td.textContent = cell;
+                    row.appendChild(td);
+                });
+                tbody.appendChild(row);
+            });
+
+            valueTable.appendChild(thead);
+            valueTable.appendChild(tbody);
+            valueSection.querySelector('.section-content').appendChild(valueTable);
+
+            return valueSection;
+        }
+    </script>
+
+    <style>
+        .metadata-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .metadata-section {
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        .section-header {
+            padding: 10px;
+            background-color: #f5f5f5;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-content {
+            padding: 10px;
+            display: none;
+        }
+
+        .section-header:hover {
+            background-color: #e0e0e0;
+        }
+
+        .tensor-item {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 3px;
+        }
+
+        .offload-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+            .offload-table th,
+            .offload-table td {
+                padding: 8px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+
+            .offload-table th {
+                background-color: #f5f5f5;
+            }
+
+        .value-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+            .value-table th,
+            .value-table td {
+                padding: 8px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+
+            .value-table th {
+                background-color: #f5f5f5;
+            }
+
+        h2 {
+            display: inline-block;
+        }
+
+        summary {
+            cursor: pointer;
+        }
+    </style>
 </body>
 </html>

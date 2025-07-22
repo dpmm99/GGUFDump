@@ -10,11 +10,13 @@ public static class Program
         {
             //Use args as the model filename, use GgufMetadata to load it, and just dump all the dictionaries to the screen.
             //Join all args together with a space in case the filename has spaces in it and the user didn't use quotation marks.
-            DumpGGUF(string.Join(" ", args));
+            var filename = string.Join(" ", args);
+            if (filename.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) DumpJsonKvCache(filename);
+            else DumpGGUF(filename);
         }
         else
         {
-            Console.WriteLine("Usage: GGUFDump <filename>. Alternatively, you can drag and drop a GGUF file onto the executable.");
+            Console.WriteLine("Usage: GGUFDump <filename>. Alternatively, you can drag and drop a GGUF file (or config.json) onto the executable.");
         }
 
         Console.WriteLine("Press any key to continue...");
@@ -84,5 +86,10 @@ public static class Program
         }
 
         Console.WriteLine("KV cache usage per token: " + ggufMetadata.GetKvCacheKBPerToken() + " KB");
+    }
+
+    private static void DumpJsonKvCache(string filename)
+    {
+        Console.WriteLine("KV cache usage per token: " + GgufMetadata.GetKvCacheKBPerToken(File.ReadAllText(filename)) + " KB");
     }
 }

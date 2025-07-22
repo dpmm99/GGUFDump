@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Text.Json;
 
 namespace LLMExperiment;
 
@@ -395,5 +396,27 @@ public class GgufMetadata
         var attentionHeads = UInt32Values.GetValueOrDefault(architecture + ".attention.head_count", 40u);
         var kvHeads = UInt32Values.GetValueOrDefault(architecture + ".attention.head_count_kv", 8u);
         return (int)(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024); // 2 for key and value, 2 for byte precision
+    }
+
+    /// <summary>
+    /// Calculates the key-value cache size per token based on provided JSON metadata.
+    /// </summary>
+    /// <remarks><inheritdoc cref="GetKvCacheKBPerToken()"/></remarks>
+    /// <param name="json">A JSON string with keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.</param>
+    /// <returns><inheritdoc cref="GetKvCacheKBPerToken()"/></returns>
+    public static int GetKvCacheKBPerToken(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            throw new ArgumentException("Input JSON cannot be null or empty.", nameof(json));
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        int hiddenSize = root.GetProperty("hidden_size").GetInt32();
+        int attentionHeads = root.GetProperty("num_attention_heads").GetInt32();
+        int hiddenLayers = root.GetProperty("num_hidden_layers").GetInt32();
+        int kvHeads = root.GetProperty("num_key_value_heads").GetInt32();
+
+        return (int)(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024);
     }
 }
