@@ -507,17 +507,25 @@ class GgufMetadata {
      */
     getKvCacheKBPerToken() {
         const architecture = this.stringValues['general.architecture'] || 'llama';
-        const hiddenLayers = this.uint32Values[architecture + '.block_count'] || 64;
-        const hiddenSize = this.uint32Values[architecture + '.embedding_length'] || 5120;
-        const attentionHeads = this.uint32Values[architecture + '.attention.head_count'] || 40;
-        const kvHeads = this.uint32Values[architecture + '.attention.head_count_kv'] || 8;
-        return Math.floor(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024); // 2 for key and value, 2 for byte precision
+        const hiddenLayers = this.uint32Values[architecture + '.block_count'] || 64; //num_hidden_layers in config.json
+        const kvHeads = this.uint32Values[architecture + '.attention.head_count_kv'] || 8; //num_key_value_heads in config.json
+		//kvSize is 2 * hidden_size, qk_nope_head_dim + 2 * qk_rope_head_dim, 2 * head_dim, kv_lora_rank + qk_rope_head_dim + v_head_dim, OR 2 * d_kv in config.json depending on the model.
+		const kvSize = (this.uint32Values[architecture + ".attention.key_length"] + this.uint32Values[architecture + ".attention.value_length"]) ||
+			(2 * this.uint32Values[architecture + ".head_dim"]) ||
+			(2 * this.uint32Values[architecture + '.embedding_length'] / this.uint32Values[architecture + '.attention.head_count']); //hidden_size and num_attention_heads in config.json
+        return Math.floor(hiddenLayers * kvHeads * kvSize * 2 / 1024); // * 2 for byte precision
     }
 }
 
 /**
  * Calculates the key-value cache size per token based on provided JSON metadata.
- * @param {string|object} json - A JSON string or object with keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.
+ * The kvSize fallback order is:
+ *   2. qk_nope_head_dim + 2 * qk_rope_head_dim
+ *   3. 2 * head_dim
+ *   4. kv_lora_rank + qk_rope_head_dim + v_head_dim
+ *   5. 2 * d_kv
+ *   6. 2 * hidden_size / num_attention_heads
+ * @param {string|object} json - A JSON string or object with keys: num_attention_heads, num_hidden_layers, num_key_value_heads, etc.
  * @returns {number} The size of the key-value cache in kilobytes required per token.
  */
 function getKvCacheKBPerTokenFromJson(json) {
@@ -531,21 +539,43 @@ function getKvCacheKBPerTokenFromJson(json) {
         throw new Error("Input must be a JSON string or object.");
     }
 
-    const hiddenSize = obj.hidden_size;
-    const attentionHeads = obj.num_attention_heads;
     const hiddenLayers = obj.num_hidden_layers;
     const kvHeads = obj.num_key_value_heads;
+    const attentionHeads = obj.num_attention_heads;
 
     if (
-        typeof hiddenSize !== 'number' ||
-        typeof attentionHeads !== 'number' ||
         typeof hiddenLayers !== 'number' ||
-        typeof kvHeads !== 'number'
+        typeof kvHeads !== 'number' ||
+        typeof attentionHeads !== 'number'
     ) {
-        throw new Error("JSON must contain numeric keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.");
+        throw new Error("JSON must contain numeric keys: num_hidden_layers, num_key_value_heads, num_attention_heads.");
     }
 
-    return Math.floor(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024);
+    // Fallback logic for kvSize, combined from various different models' conversion logic in convert_hf_to_gguf.py
+    let kvSize = null;
+    if (typeof obj.qk_nope_head_dim === 'number' && typeof obj.qk_rope_head_dim === 'number') {
+        kvSize = obj.qk_nope_head_dim + 2 * obj.qk_rope_head_dim;
+    } else if (typeof obj.head_dim === 'number') {
+        kvSize = 2 * obj.head_dim;
+    } else if (
+        typeof obj.kv_lora_rank === 'number' &&
+        typeof obj.qk_rope_head_dim === 'number' &&
+        typeof obj.v_head_dim === 'number'
+    ) {
+        kvSize = obj.kv_lora_rank + obj.qk_rope_head_dim + obj.v_head_dim;
+    } else if (typeof obj.d_kv === 'number') {
+        kvSize = 2 * obj.d_kv;
+    } else if (
+        typeof obj.hidden_size === 'number' &&
+        typeof obj.num_attention_heads === 'number'
+    ) {
+        kvSize = 2 * obj.embedding_length / obj.num_attention_heads;
+    } else {
+        throw new Error("JSON does not contain sufficient information to determine kvSize.");
+    }
+
+    // 2 for byte precision (key+value), divide by 1024 for KB
+    return Math.floor(hiddenLayers * kvHeads * kvSize * 2 / 1024);
 }
 
 const GgufMetadataValueType = {

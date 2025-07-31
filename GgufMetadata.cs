@@ -384,25 +384,49 @@ public class GgufMetadata
     /// <summary>
     /// Calculates the key-value cache size per token based on the GGUF metadata.
     /// </summary>
-    /// <remarks>The size calculation is: hidden layers * hidden size * key-value heads * 4 / attention heads / 1024.<br/>
-    /// The 4 comes from assuming 2-byte precision for both key and value. <br/>
-    /// It's in KB for convenience, as the models I checked ranged from 12 KB to 651 KB per token.</remarks>
+    /// <remarks>
+    /// The size calculation is: hidden layers * kv size * key-value heads * 2 / 1024.<br/>
+    /// If kv size isn't present, it's calculated from hidden size * 2 / attention heads instead. That 2 comes from 1 for k + 1 for v.<br/>
+    /// The 2 comes from assuming 2-byte precision for both key and value.<br/>
+    /// It's in KB for convenience, as the models I checked ranged from 12 KB to 651 KB per token.
     /// <returns>The size of the key-value cache in kilobytes required per token.</returns>
     public int GetKvCacheKBPerToken()
     {
         var architecture = StringValues.GetValueOrDefault("general.architecture", "llama");
         var hiddenLayers = UInt32Values.GetValueOrDefault(architecture + ".block_count", 64u);
-        var hiddenSize = UInt32Values.GetValueOrDefault(architecture + ".embedding_length", 5120u);
-        var attentionHeads = UInt32Values.GetValueOrDefault(architecture + ".attention.head_count", 40u);
         var kvHeads = UInt32Values.GetValueOrDefault(architecture + ".attention.head_count_kv", 8u);
-        return (int)(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024); // 2 for key and value, 2 for byte precision
+        var kvSize = UInt32Values.GetValueOrDefault(architecture + ".attention.key_length", 0u)
+            + UInt32Values.GetValueOrDefault(architecture + ".attention.value_length", 0u);
+        if (kvSize == 0)
+        {
+            kvSize = 2 * UInt32Values.GetValueOrDefault(architecture + ".head_dim", 0u);
+        }
+        if (kvSize == 0)
+        {
+            var embeddingLength = UInt32Values.GetValueOrDefault(architecture + ".embedding_length", 0u);
+            var attentionHeads = UInt32Values.GetValueOrDefault(architecture + ".attention.head_count", 0u);
+            if (embeddingLength > 0 && attentionHeads > 0)
+            {
+                kvSize = 2 * embeddingLength / attentionHeads;
+            }
+        }
+
+        return (int)(hiddenLayers * kvHeads * kvSize * 2 / 1024); // * 2 for byte precision
     }
 
     /// <summary>
-    /// Calculates the key-value cache size per token based on provided JSON metadata.
+    /// Calculates the key-value cache size per token based on provided JSON metadata.<br/>
+    /// The kvSize fallback order is:
+    /// <list type="number">
+    /// <item>qk_nope_head_dim + 2 * qk_rope_head_dim</item>
+    /// <item>2 * head_dim</item>
+    /// <item>kv_lora_rank + qk_rope_head_dim + v_head_dim</item>
+    /// <item>2 * d_kv</item>
+    /// <item>2 * hidden_size / num_attention_heads</item>
+    /// </list>
     /// </summary>
     /// <remarks><inheritdoc cref="GetKvCacheKBPerToken()"/></remarks>
-    /// <param name="json">A JSON string with keys: hidden_size, num_attention_heads, num_hidden_layers, num_key_value_heads.</param>
+    /// <param name="json">A JSON string with keys: num_attention_heads, num_hidden_layers, num_key_value_heads.</param>
     /// <returns><inheritdoc cref="GetKvCacheKBPerToken()"/></returns>
     public static int GetKvCacheKBPerToken(string json)
     {
@@ -412,11 +436,50 @@ public class GgufMetadata
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        int hiddenSize = root.GetProperty("hidden_size").GetInt32();
-        int attentionHeads = root.GetProperty("num_attention_heads").GetInt32();
-        int hiddenLayers = root.GetProperty("num_hidden_layers").GetInt32();
-        int kvHeads = root.GetProperty("num_key_value_heads").GetInt32();
+        // Required fields
+        if (!root.TryGetProperty("num_hidden_layers", out var hiddenLayersElem) ||
+            !root.TryGetProperty("num_key_value_heads", out var kvHeadsElem) ||
+            !root.TryGetProperty("num_attention_heads", out var attentionHeadsElem))
+        {
+            throw new ArgumentException("JSON must contain numeric keys: num_hidden_layers, num_key_value_heads, num_attention_heads.");
+        }
 
-        return (int)(hiddenLayers * hiddenSize * kvHeads * 4 / attentionHeads / 1024);
+        int hiddenLayers = hiddenLayersElem.GetInt32();
+        int kvHeads = kvHeadsElem.GetInt32();
+        int attentionHeads = attentionHeadsElem.GetInt32();
+
+        // Fallback logic for kvSize
+        int? kvSize = null;
+        if (root.TryGetProperty("qk_nope_head_dim", out var qkNopeElem) && qkNopeElem.ValueKind == JsonValueKind.Number &&
+            root.TryGetProperty("qk_rope_head_dim", out var qkRopeElem) && qkRopeElem.ValueKind == JsonValueKind.Number)
+        {
+            kvSize = qkNopeElem.GetInt32() + 2 * qkRopeElem.GetInt32();
+        }
+        else if (root.TryGetProperty("head_dim", out var headDimElem) && headDimElem.ValueKind == JsonValueKind.Number)
+        {
+            kvSize = 2 * headDimElem.GetInt32();
+        }
+        else if (root.TryGetProperty("kv_lora_rank", out var kvLoraElem) && kvLoraElem.ValueKind == JsonValueKind.Number &&
+                 root.TryGetProperty("qk_rope_head_dim", out var qkRopeElem2) && qkRopeElem2.ValueKind == JsonValueKind.Number &&
+                 root.TryGetProperty("v_head_dim", out var vHeadElem) && vHeadElem.ValueKind == JsonValueKind.Number)
+        {
+            kvSize = kvLoraElem.GetInt32() + qkRopeElem2.GetInt32() + vHeadElem.GetInt32();
+        }
+        else if (root.TryGetProperty("d_kv", out var dKvElem) && dKvElem.ValueKind == JsonValueKind.Number)
+        {
+            kvSize = 2 * dKvElem.GetInt32();
+        }
+        else if (root.TryGetProperty("hidden_size", out var embeddingLenElem) && embeddingLenElem.ValueKind == JsonValueKind.Number &&
+                 root.TryGetProperty("num_attention_heads", out var numAttnHeadsElem) && numAttnHeadsElem.ValueKind == JsonValueKind.Number)
+        {
+            kvSize = (int)(2 * embeddingLenElem.GetInt32() / (double)numAttnHeadsElem.GetInt32());
+        }
+        else
+        {
+            throw new ArgumentException("JSON does not contain sufficient information to determine kvSize.");
+        }
+
+        // 2 for byte precision (key+value), divide by 1024 for KB
+        return (int)Math.Floor(hiddenLayers * kvHeads * kvSize.Value * 2.0 / 1024.0);
     }
 }
